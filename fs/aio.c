@@ -1699,8 +1699,6 @@ long do_io_submit(aio_context_t ctx_id, long nr,
 
 	kiocb_batch_init(&batch, nr);
 
-	blk_start_plug(&plug);
-
 	for (i=0; i<nr; i++) {
 		struct iocb __user *user_iocb;
 		struct iocb tmp;
