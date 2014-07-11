@@ -1,8 +1,8 @@
 VERSION = 3
 PATCHLEVEL = 4
 SUBLEVEL = 10
-EXTRAVERSION =-BoA
-NAME = Saber-toothed Squirrel
+EXTRAVERSION =-anvol
+NAME = CTO at mobiliuz.com
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"

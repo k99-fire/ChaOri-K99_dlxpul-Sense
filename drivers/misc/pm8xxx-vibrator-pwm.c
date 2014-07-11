@@ -44,6 +44,7 @@ struct pm8xxx_vib_pwm {
 	int pwm_gpio;
 	int (*set_vdd_power)(int en);
 };
+static struct pm8xxx_vib_pwm *vib_dev;
 static int duty_us, period_us;
 static int switch_state = 1;
 static int pm8xxx_vib_set_on(struct pm8xxx_vib_pwm *vib)
@@ -159,6 +160,12 @@ retry:
 			      ktime_set(value / 1000, (value % 1000) * 1000000),
 			      HRTIMER_MODE_REL);
 	}
+}
+
+int vibrate(int time)
+{
+    pm8xxx_vib_enable(&vib_dev->timed_dev, time);
+    return 0;
 }
 
 static void pm8xxx_vib_update(struct work_struct *work)
@@ -348,6 +355,7 @@ static int __devinit pm8xxx_vib_probe(struct platform_device *pdev)
 	}
 
 	platform_set_drvdata(pdev, vib);
+	vib_dev = vib;
 	duty_us= vib->pdata->duty_us;
 	period_us=vib->pdata->PERIOD_US;
 	VIB_PWM_INFO("%s-\n", __func__);
