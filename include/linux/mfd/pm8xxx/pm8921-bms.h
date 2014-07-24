@@ -104,6 +104,7 @@ struct pm8921_bms_platform_data {
 	unsigned int			criteria_sw_est_ocv; 
 	unsigned int			rconn_mohm_sw_est_ocv;
 	void (*get_power_jacket_status) (int *full, int *status, int *exist);
+	int				qb_mode_cc_criteria_uAh;
 };
 
 extern int batt_stored_magic_num;
@@ -143,6 +144,9 @@ int pm8921_store_hw_reset_reason(int is_hw_reset);
 int pm8921_bms_get_batt_soc(int *result);
 int pm8921_bms_get_batt_cc(int *result);
 int pm8921_bms_get_attr_text(char *buf, int size);
+int pm8921_bms_enter_qb_mode(void);
+int pm8921_bms_exit_qb_mode(void);
+int pm8921_qb_mode_pwr_consumption_check(unsigned long time_stamp);
 #endif 
 #else
 static inline int pm8921_bms_get_vsense_avg(int *result)
@@ -216,6 +220,18 @@ static inline int pm8921_bms_get_batt_cc(int *result)
 	return -ENXIO;
 }
 static inline int pm8921_bms_get_attr_text(char *buf, int size)
+{
+	return 0;
+}
+static inline int pm8921_bms_enter_qb_mode(void)
+{
+	return 0;
+}
+static inline int pm8921_bms_exit_qb_mode(void)
+{
+	return 0;
+}
+static inline int pm8921_qb_mode_pwr_consumption_check(unsigned long time_stamp)
 {
 	return 0;
 }
