@@ -1323,8 +1323,10 @@ convert_format:
 exit:
 	if (plbestnet)
 		MFREE(dhd->osh, plbestnet, PNO_BESTNET_LEN);
-	_params->params_batch.get_batch.buf = NULL;
-	_params->params_batch.get_batch.bufsize = 0;
+    if(_params){
+		_params->params_batch.get_batch.buf = NULL;
+		_params->params_batch.get_batch.bufsize = 0;
+    }
 	mutex_unlock(&_pno_state->pno_mutex);
 	complete(&_pno_state->get_batch_done);
 	return err;

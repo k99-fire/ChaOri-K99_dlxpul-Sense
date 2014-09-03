@@ -753,6 +753,7 @@ unsigned long try_to_compact_pages(struct zonelist *zonelist,
 	struct zoneref *z;
 	struct zone *zone;
 	int rc = COMPACT_SKIPPED;
+	int alloc_flags = 0;
 
 	/*
 	 * Check whether it is worth even starting compaction. The order check is
@@ -764,7 +765,11 @@ unsigned long try_to_compact_pages(struct zonelist *zonelist,
 
 	count_vm_event(COMPACTSTALL);
 
-	/* Compact each zone in the list */
+#ifdef CONFIG_CMA
+	if (allocflags_to_migratetype(gfp_mask) == MIGRATE_MOVABLE)
+		alloc_flags |= ALLOC_CMA;
+#endif
+	
 	for_each_zone_zonelist_nodemask(zone, z, zonelist, high_zoneidx,
 								nodemask) {
 		int status;
@@ -772,8 +777,8 @@ unsigned long try_to_compact_pages(struct zonelist *zonelist,
 		status = compact_zone_order(zone, order, gfp_mask, sync);
 		rc = max(status, rc);
 
-		/* If a normal allocation would succeed, stop compacting */
-		if (zone_watermark_ok(zone, order, low_wmark_pages(zone), 0, 0))
+		if (zone_watermark_ok(zone, order, low_wmark_pages(zone), 0,
+				      alloc_flags))
 			break;
 	}
 

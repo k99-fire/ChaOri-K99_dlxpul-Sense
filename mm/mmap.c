@@ -786,9 +786,6 @@ struct vm_area_struct *vma_merge(struct mm_struct *mm,
   			mpol_equal(vma_policy(prev), policy) &&
 			can_vma_merge_after(prev, vm_flags, anon_vma,
 						file, pgoff, anon_name)) {
-		/*
-		 * OK, it can.  Can we now merge in the successor as well?
-		 */
 		if (next && end == next->vm_start &&
 				mpol_equal(policy, vma_policy(next)) &&
 				can_vma_merge_before(next, vm_flags, anon_vma,
@@ -814,7 +811,7 @@ struct vm_area_struct *vma_merge(struct mm_struct *mm,
  			mpol_equal(policy, vma_policy(next)) &&
 			can_vma_merge_before(next, vm_flags, anon_vma,
 					file, pgoff+pglen, anon_name)) {
-		if (prev && addr < prev->vm_end)	/* case 4 */
+		if (prev && addr < prev->vm_end)	
 			err = vma_adjust(prev, prev->vm_start,
 				addr, prev->vm_pgoff, NULL);
 		else					/* cases 3, 8 */
@@ -1285,9 +1282,6 @@ munmap_back:
 		vm_flags |= VM_ACCOUNT;
 	}
 
-	/*
-	 * Can we just expand an old mapping?
-	 */
 	vma = vma_merge(mm, prev, addr, addr + len, vm_flags, NULL, file, pgoff,
 			NULL, NULL);
 	if (vma)
