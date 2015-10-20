@@ -39,6 +39,7 @@ void __generic_unplug_device(struct request_queue *);
  */
 enum rq_atomic_flags {
 	REQ_ATOM_COMPLETE = 0,
+	REQ_ATOM_URGENT = 1,
 };
 
 /*
@@ -55,9 +56,16 @@ static inline void blk_clear_rq_complete(struct request *rq)
 	clear_bit(REQ_ATOM_COMPLETE, &rq->atomic_flags);
 }
 
-/*
- * Internal elevator interface
- */
+static inline int blk_mark_rq_urgent(struct request *rq)
+{
+	return test_and_set_bit(REQ_ATOM_URGENT, &rq->atomic_flags);
+}
+
+static inline void blk_clear_rq_urgent(struct request *rq)
+{
+	clear_bit(REQ_ATOM_URGENT, &rq->atomic_flags);
+}
+
 #define ELV_ON_HASH(rq)		(!hlist_unhashed(&(rq)->hash))
 
 void blk_insert_flush(struct request *rq);

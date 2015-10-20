@@ -1,0 +1,9 @@
+make ARCH=arm CROSS_COMPILE=/work2/htc/toolchain/arm-cortex_a15-linux-gnueabihf-linaro_4.8.4-2014.11/bin/arm-cortex_a15-linux-gnueabihf- -o3 -j8
+
+#cd ./kcontrol_gpu_msm-master/
+#make clean
+#make ARCH=arm CROSS_COMPILE=/work2/htc/toolchain/arm-cortex_a15-linux-gnueabihf-linaro_4.8.4-2014.11/bin/arm-cortex_a15-linux-gnueabihf- -o3
+#cd ..
+
+find . -name "*.ko" -exec cp {} ../output_release \;
+cp ./arch/arm/boot/zImage ../output_release
