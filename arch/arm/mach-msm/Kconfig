@@ -346,6 +346,12 @@ config ARCH_MSM8974
 	select MSM_RPM_REGULATOR_SMD
 	select ARM_HAS_SG_CHAIN
 
+config MACH_FIGHTER
+	depends on ARCH_MSM8960
+	bool "Fighter"
+	help
+	  Support for the HTC Fighter
+
 config MACH_JEWEL_DD
         depends on ARCH_MSM8960
         bool "Jel_dd"
@@ -1806,12 +1812,6 @@ config MSM_CPU_FREQ_MIN
 	default 245760
 
 endif # CPU_FREQ_MSM
-	  
-config CPU_VOLTAGE_TABLE
-	bool "Enable CPU Voltage Table via sysfs for adjustements"
-	default n
-	help
-	  Krait User Votlage Control
 
 config MSM_CPU_AVS
 	bool "Enable software controlled Adaptive Voltage Scaling (AVS)"
@@ -2893,6 +2893,12 @@ config MACH_DLP_DTU
 	help
 	  Support for the HTC APQ8064 DLP_DTU.
 
+config MACH_T6_U
+        depends on ARCH_APQ8064
+        bool "APQ8064 T6_U"
+        help
+          Support for the HTC APQ8064 T6_U.
+
 config QSC_MODEM
         default n
         bool "QMC QSC MODEM"
@@ -2928,6 +2934,12 @@ config MSM_NONSMD_PACKET_FILTER
 	help
 	  The white TCP port list is updated in attribute
 	  repying on RIL to notify modem.
+
+config MONITOR_STREAMING_PORT_SOCKET
+	bool "monitor streaming port"
+	default n
+	help
+	  Monitor if any streaming port is connected
 
 config IO_FOOTPRINT
 	bool "Trace I/O for each CPU"
@@ -2971,25 +2983,5 @@ config IOEXTENDER
         bool "Enable IOEXTENDER feature"
 	help
 	 To support IOEXTENDER feature
-
-config FORCE_FAST_CHARGE
-	bool "Force AC charge mode at will"
-	default y
-	help
-	  A simple sysfs interface to force adapters that
-	  are detected as USB to charge as AC.
-
-config UPDATE_LCDC_LUT
-        bool "Set initial Qualcomm LCDC lut"
-        default y
-        help
-          Set initial Qualcomm LCDC Look Up Table.
-
-config LCD_KCAL
-        tristate "MSM generic LCDC Calibration"
-        default y
-        help
-          Enable MSM generic LCDC temperature Calibration.
-
 endif
 

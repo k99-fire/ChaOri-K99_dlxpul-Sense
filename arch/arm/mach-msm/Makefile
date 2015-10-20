@@ -225,9 +225,25 @@ endif
 
 ifdef CONFIG_BT
 	obj-$(CONFIG_MACH_MONARUDO) += board-monarudo-rfkill.o  htc_bdaddress.o
+	obj-$(CONFIG_MACH_M7_WLS) += board-m7wl-rfkill.o  htc_bdaddress.o htc_4335_wl_reg.o
+	obj-$(CONFIG_MACH_M7_WLV) += board-m7wl-rfkill.o  htc_bdaddress.o htc_4335_wl_reg.o
+	obj-$(CONFIG_MACH_M7_WLJ) += board-m7wl-rfkill.o  htc_bdaddress.o htc_4335_wl_reg.o
+	obj-$(CONFIG_MACH_M7_DCG) += htc_bdaddress.o
+	obj-$(CONFIG_MACH_M7_DUG) += htc_bdaddress.o
+	obj-$(CONFIG_MACH_M7_DTU) += htc_bdaddress.o
+	obj-$(CONFIG_MACH_M7C_DTU) += htc_bdaddress.o
+	obj-$(CONFIG_MACH_M7C_DUG) += htc_bdaddress.o
+	obj-$(CONFIG_MACH_M7C_DWG) += htc_bdaddress.o
 	obj-$(CONFIG_MACH_DLP_DTU) += htc_bdaddress.o
 	obj-$(CONFIG_MACH_DLP_DUG) += htc_bdaddress.o
 	obj-$(CONFIG_MACH_DLP_DWG) += htc_bdaddress.o
+	obj-$(CONFIG_MACH_T6_TL) += htc_bdaddress.o
+	obj-$(CONFIG_MACH_T6_DUG) += htc_bdaddress.o
+	obj-$(CONFIG_MACH_T6_DWG) += htc_bdaddress.o
+	obj-$(CONFIG_MACH_T6_UL) += htc_bdaddress.o
+	obj-$(CONFIG_MACH_T6_WL) += htc_bdaddress.o
+	obj-$(CONFIG_MACH_T6_WHL) += htc_bdaddress.o
+	obj-$(CONFIG_MACH_T6_UHL) += htc_bdaddress.o
 	obj-$(CONFIG_MACH_DLXP_UL) += board-dlxp_ul-rfkill.o htc_bdaddress.o htc_4335_wl_reg.o
 endif
 
@@ -340,15 +356,54 @@ obj-$(CONFIG_MACH_DLP_DUG) += board-dlp_dug-all.o board-dlp_china-regulator.o
 obj-$(CONFIG_MACH_DLP_DWG) += board-dlp_dwg-all.o board-dlp_china-regulator.o
 
 obj-$(CONFIG_MACH_MONARUDO) += htc_util.o
+obj-$(CONFIG_MACH_DELUXE_J) += htc_util.o
+obj-$(CONFIG_MACH_DELUXE_UB1) += htc_util.o
+obj-$(CONFIG_MACH_DELUXE_U) += htc_util.o
+obj-$(CONFIG_MACH_IMPRESSION_J) += htc_util.o
 obj-$(CONFIG_MACH_M7_UL) += htc_util.o
+obj-$(CONFIG_MACH_M7_WLS) += htc_util.o
+obj-$(CONFIG_MACH_M7_WLV) += htc_util.o
+obj-$(CONFIG_MACH_M7_WLJ) += htc_util.o
+obj-$(CONFIG_MACH_M7_DCG) += htc_util.o
+obj-$(CONFIG_MACH_M7_DUG) += htc_util.o
+obj-$(CONFIG_MACH_M7_DTU) += htc_util.o
+obj-$(CONFIG_MACH_M7C_DTU) += htc_util.o
+obj-$(CONFIG_MACH_M7C_DUG) += htc_util.o
+obj-$(CONFIG_MACH_M7C_DWG) += htc_util.o
+obj-$(CONFIG_MACH_T6_TL) += htc_util.o
+obj-$(CONFIG_MACH_T6_DUG) += htc_util.o
+obj-$(CONFIG_MACH_T6_DWG) += htc_util.o
+obj-$(CONFIG_MACH_T6_UL) += htc_util.o
+obj-$(CONFIG_MACH_T6_WL) += htc_util.o
+obj-$(CONFIG_MACH_T6_WHL) += htc_util.o
+obj-$(CONFIG_MACH_T6_UHL) += htc_util.o
+obj-$(CONFIG_MACH_DLXP_WL) += htc_util.o
 obj-$(CONFIG_MACH_DLXP_UL) += htc_util.o
 obj-$(CONFIG_MACH_DLP_DTU) += htc_util.o
 obj-$(CONFIG_MACH_DLP_DUG) += htc_util.o
 obj-$(CONFIG_MACH_DLP_DWG) += htc_util.o
+obj-$(CONFIG_MACH_ELITE) += htc_bdaddress.o
+obj-$(CONFIG_MACH_ELITE) += htc_util.o
+obj-$(CONFIG_MACH_EVITA_UTL) += htc_bdaddress.o
+obj-$(CONFIG_MACH_EVITA_UTL) += htc_util.o
+obj-$(CONFIG_MACH_VILLE) += htc_bdaddress.o
+obj-$(CONFIG_MACH_VILLE) += htc_util.o
+obj-$(CONFIG_MACH_FIGHTER) += board-fighter.o board-fighter-regulator.o board-fighter-gpiomux.o board-fighter-storage.o board-fighter-audio.o board-fighter-camera.o
+obj-$(CONFIG_MACH_FIGHTER) += board-fighter-keypad.o
+obj-$(CONFIG_MACH_FIGHTER) += htc_bdaddress.o
+obj-$(CONFIG_MACH_FIGHTER) += htc_util.o
+obj-$(CONFIG_MACH_JET) += htc_bdaddress.o
+obj-$(CONFIG_MACH_JET) += htc_util.o
 obj-$(CONFIG_MACH_JEWEL_DD) += htc_bdaddress.o
 obj-$(CONFIG_MACH_JEWEL_DD) += htc_util.o
+obj-$(CONFIG_MACH_VALENTE_WX) += htc_bdaddress.o
+obj-$(CONFIG_MACH_VALENTE_WX) += htc_util.o
+obj-$(CONFIG_MACH_VALENTE_WX_C9) += htc_bdaddress.o
+obj-$(CONFIG_MACH_VALENTE_WX_C9) += htc_util.o
 
+#obj-$(CONFIG_MACH_K2_U) += htc_acoustic.o
 
+#obj-$(CONFIG_MACH_TC2) += htc_acoustic.o
 
 
 
@@ -356,10 +411,15 @@ obj-$(CONFIG_MACH_JEWEL_DD) += htc_util.o
 
 #obj-$(CONFIG_MACH_M4_UL) += htc_acoustic.o
 
+#obj-$(CONFIG_MACH_ZIP_CL) += htc_acoustic.o
 
+#obj-$(CONFIG_MACH_K2_CL) += htc_acoustic.o
 
+#obj-$(CONFIG_MACH_K2_PLC_CL) += htc_acoustic.o
 
+#obj-$(CONFIG_MACH_K2_UL) += htc_acoustic.o
 
+#obj-$(CONFIG_MACH_OPERAUL) += htc_acoustic.o
 obj-$(CONFIG_ARCH_MSM9615) += board-9615.o devices-9615.o board-9615-regulator.o board-9615-gpiomux.o board-9615-storage.o board-9615-display.o
 obj-$(CONFIG_ARCH_MSM9615) += clock-local.o clock-9615.o acpuclock-9615.o clock-rpm.o clock-pll.o
 obj-$(CONFIG_ARCH_MSM8974) += board-8974.o board-dt.o board-8974-regulator.o board-8974-gpiomux.o
@@ -489,11 +549,7 @@ obj-$(CONFIG_IO_FOOTPRINT) += io_footprint.o
 
 obj-$(CONFIG_IOEXTENDER) += ADP5585_ioextender.o
 
-obj-$(CONFIG_FORCE_FAST_CHARGE) += fastchg.o
-
 #PWR2_ADD, @CPU Sniffer: CPU usage statistics.
 obj-y += htc_cpu_usage_stats.o
 
 obj-$(CONFIG_MSM_IPC_ROUTER_SECURITY)+= msm_ipc_router_security.o
-
-obj-$(CONFIG_LCD_KCAL) += msm_kcal_ctrl.o

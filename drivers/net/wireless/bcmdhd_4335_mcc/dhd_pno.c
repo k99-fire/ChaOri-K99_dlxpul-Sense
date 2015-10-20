@@ -109,7 +109,6 @@ _dhd_pno_suspend(dhd_pub_t *dhd)
 	NULL_CHECK(dhd, "dhd is NULL", err);
 	NULL_CHECK(dhd->pno_state, "pno_state is NULL", err);
 	DHD_PNO(("%s enter\n", __FUNCTION__));
-    _pno_state = PNO_GET_PNOSTATE(dhd);
 	err = dhd_iovar(dhd, 0, "pfn_suspend", (char *)&suspend, sizeof(suspend), 1);
 	if (err < 0) {
 		DHD_ERROR(("%s : failed to suspend pfn(error :%d)\n", __FUNCTION__, err));
@@ -145,11 +144,7 @@ _dhd_pno_enable(dhd_pub_t *dhd, int enable)
 			dhd_is_associated(dhd, NULL, NULL)) {
 			DHD_ERROR(("%s Legacy PNO mode cannot be enabled "
 				"in assoc mode , ignore it\n", __FUNCTION__));
-#ifndef CUSTOMER_HW_ONE
 			err = BCME_BADOPTION;
-#else
-            _pno_state->pno_mode &= ~DHD_PNO_LEGACY_MODE;
-#endif
 			goto exit;
 		}
 	}
@@ -1787,8 +1782,8 @@ int dhd_pno_init(dhd_pub_t *dhd)
 	if (dhd->pno_state)
 		goto exit;
 	dhd->pno_state = MALLOC(dhd->osh, sizeof(dhd_pno_status_info_t));
-    NULL_CHECK(dhd->pno_state, "failed to create dhd_pno_state", err);
 	memset(dhd->pno_state, 0, sizeof(dhd_pno_status_info_t));
+	NULL_CHECK(dhd, "failed to create dhd_pno_state", err);
 	
 	_pno_state = PNO_GET_PNOSTATE(dhd);
 	_pno_state->wls_supported = TRUE;

@@ -37,11 +37,15 @@ MODULE_LICENSE("GPL");
 static LIST_HEAD(input_dev_list);
 static LIST_HEAD(input_handler_list);
 
+/*
+ * input_mutex protects access to both input_dev_list and input_handler_list.
+ * This also causes input_[un]register_device and input_[un]register_handler
+ * be mutually exclusive which simplifies locking in drivers implementing
+ * input handlers.
+ */
 static DEFINE_MUTEX(input_mutex);
 
 static struct input_handler *input_table[8];
-
-static const struct input_value input_value_sync = { EV_SYN, SYN_REPORT, 1 };
 
 static inline int is_event_supported(unsigned int code,
 				     unsigned long *bm, unsigned int max)
@@ -65,6 +69,79 @@ static int input_defuzz_abs_event(int value, int old_val, int fuzz)
 	return value;
 }
 
+/*
+ * Pass event first through all filters and then, if event has not been
+ * filtered out, through all open handles. This function is called with
+ * dev->event_lock held and interrupts disabled.
+ */
+static void input_pass_event(struct input_dev *dev,
+			     unsigned int type, unsigned int code, int value)
+{
+	struct input_handler *handler;
+	struct input_handle *handle;
+
+	rcu_read_lock();
+
+	handle = rcu_dereference(dev->grab);
+	if (handle)
+		handle->handler->event(handle, type, code, value);
+	else {
+		bool filtered = false;
+
+		list_for_each_entry_rcu(handle, &dev->h_list, d_node) {
+			if (!handle->open)
+				continue;
+
+			handler = handle->handler;
+			if (!handler->filter) {
+				if (filtered)
+					break;
+
+				handler->event(handle, type, code, value);
+
+			} else if (handler->filter(handle, type, code, value))
+				filtered = true;
+		}
+	}
+
+	rcu_read_unlock();
+}
+
+/*
+ * Generate software autorepeat event. Note that we take
+ * dev->event_lock here to avoid racing with input_event
+ * which may cause keys get "stuck".
+ */
+static void input_repeat_key(unsigned long data)
+{
+	struct input_dev *dev = (void *) data;
+	unsigned long flags;
+
+	spin_lock_irqsave(&dev->event_lock, flags);
+
+	if (test_bit(dev->repeat_key, dev->key) &&
+	    is_event_supported(dev->repeat_key, dev->keybit, KEY_MAX)) {
+
+		input_pass_event(dev, EV_KEY, dev->repeat_key, 2);
+
+		if (dev->sync) {
+			/*
+			 * Only send SYN_REPORT if we are not in a middle
+			 * of driver parsing a new hardware packet.
+			 * Otherwise assume that the driver will send
+			 * SYN_REPORT once it's done.
+			 */
+			input_pass_event(dev, EV_SYN, SYN_REPORT, 1);
+		}
+
+		if (dev->rep[REP_PERIOD])
+			mod_timer(&dev->timer, jiffies +
+					msecs_to_jiffies(dev->rep[REP_PERIOD]));
+	}
+
+	spin_unlock_irqrestore(&dev->event_lock, flags);
+}
+
 static void input_start_autorepeat(struct input_dev *dev, int code)
 {
 	if (test_bit(EV_REP, dev->evbit) &&
@@ -81,117 +158,9 @@ static void input_stop_autorepeat(struct input_dev *dev)
 	del_timer(&dev->timer);
 }
 
-/*
- * Pass event first through all filters and then, if event has not been
- * filtered out, through all open handles. This function is called with
- * dev->event_lock held and interrupts disabled.
- */
-static unsigned int input_to_handler(struct input_handle *handle,
-			struct input_value *vals, unsigned int count)
-{
-	struct input_handler *handler = handle->handler;
-	struct input_value *end = vals;
-	struct input_value *v;
-
-	for (v = vals; v != vals + count; v++) {
-		if (handler->filter &&
-		    handler->filter(handle, v->type, v->code, v->value))
-			continue;
-		if (end != v)
-			*end = *v;
-		end++;
-	}
-
-	count = end - vals;
-	if (!count)
-		return 0;
-
-	if (handler->events)
-		handler->events(handle, vals, count);
-	else if (handler->event)
-		for (v = vals; v != end; v++)
-			handler->event(handle, v->type, v->code, v->value);
-
-	return count;
-}
-
-/*
- * Pass values first through all filters and then, if event has not been
- * filtered out, through all open handles. This function is called with
- * dev->event_lock held and interrupts disabled.
- */
-static void input_pass_values(struct input_dev *dev,
-			      struct input_value *vals, unsigned int count)
-{
-	struct input_handle *handle;
-	struct input_value *v;
-
-	if (!count)
-		return;
-
-	rcu_read_lock();
-
-	handle = rcu_dereference(dev->grab);
-	if (handle) {
-		count = input_to_handler(handle, vals, count);
-	} else {
-		list_for_each_entry_rcu(handle, &dev->h_list, d_node)
-			if (handle->open)
-				count = input_to_handler(handle, vals, count);
-	}
-
-	rcu_read_unlock();
-
-	add_input_randomness(vals->type, vals->code, vals->value);
-
-	/* trigger auto repeat for key events */
-	for (v = vals; v != vals + count; v++) {
-		if (v->type == EV_KEY && v->value != 2) {
-			if (v->value)
-				input_start_autorepeat(dev, v->code);
-			else
-				input_stop_autorepeat(dev);
-		}
-	}
-}
-
-static void input_pass_event(struct input_dev *dev,
-			     unsigned int type, unsigned int code, int value)
-{
-	struct input_value vals[] = { { type, code, value } };
-
-	input_pass_values(dev, vals, ARRAY_SIZE(vals));
-}
-
-static void input_repeat_key(unsigned long data)
-{
-	struct input_dev *dev = (void *) data;
-	unsigned long flags;
-
-	spin_lock_irqsave(&dev->event_lock, flags);
-
-	if (test_bit(dev->repeat_key, dev->key) &&
-	    is_event_supported(dev->repeat_key, dev->keybit, KEY_MAX)) {
-		struct input_value vals[] =  {
-			{ EV_KEY, dev->repeat_key, 2 },
-			input_value_sync
-		};
-
-		input_pass_values(dev, vals, ARRAY_SIZE(vals));
-
-		if (dev->rep[REP_PERIOD])
-			mod_timer(&dev->timer, jiffies +
-					msecs_to_jiffies(dev->rep[REP_PERIOD]));
-	}
-
-	spin_unlock_irqrestore(&dev->event_lock, flags);
-}
-
 #define INPUT_IGNORE_EVENT	0
 #define INPUT_PASS_TO_HANDLERS	1
 #define INPUT_PASS_TO_DEVICE	2
-#define INPUT_SLOT		4
-#define INPUT_FLUSH		8
 #define INPUT_PASS_TO_ALL	(INPUT_PASS_TO_HANDLERS | INPUT_PASS_TO_DEVICE)
 
 static int input_handle_abs_event(struct input_dev *dev,
@@ -201,6 +170,10 @@ static int input_handle_abs_event(struct input_dev *dev,
 	int *pold;
 
 	if (code == ABS_MT_SLOT) {
+		/*
+		 * "Stage" the event; we'll flush it later, when we
+		 * get actual touch data.
+		 */
 		if (*pval >= 0 && *pval < dev->mtsize)
 			dev->slot = *pval;
 
@@ -215,6 +188,10 @@ static int input_handle_abs_event(struct input_dev *dev,
 		struct input_mt_slot *mtslot = &dev->mt[dev->slot];
 		pold = &mtslot->abs[code - ABS_MT_FIRST];
 	} else {
+		/*
+		 * Bypass filtering for multi-touch events when
+		 * not employing slots.
+		 */
 		pold = NULL;
 	}
 
@@ -227,17 +204,17 @@ static int input_handle_abs_event(struct input_dev *dev,
 		*pold = *pval;
 	}
 
-	
+	/* Flush pending "slot" event */
 	if (is_mt_event && dev->slot != input_abs_get_val(dev, ABS_MT_SLOT)) {
 		input_abs_set_val(dev, ABS_MT_SLOT, dev->slot);
-		return INPUT_PASS_TO_HANDLERS | INPUT_SLOT;
+		input_pass_event(dev, EV_ABS, ABS_MT_SLOT, dev->slot);
 	}
 
 	return INPUT_PASS_TO_HANDLERS;
 }
 
-static int input_get_disposition(struct input_dev *dev,
-			  unsigned int type, unsigned int code, int value)
+static void input_handle_event(struct input_dev *dev,
+			       unsigned int type, unsigned int code, int value)
 {
 	int disposition = INPUT_IGNORE_EVENT;
 
@@ -250,9 +227,13 @@ static int input_get_disposition(struct input_dev *dev,
 			break;
 
 		case SYN_REPORT:
-			disposition = INPUT_PASS_TO_HANDLERS | INPUT_FLUSH;
+			if (!dev->sync) {
+				dev->sync = true;
+				disposition = INPUT_PASS_TO_HANDLERS;
+			}
 			break;
 		case SYN_MT_REPORT:
+			dev->sync = false;
 			disposition = INPUT_PASS_TO_HANDLERS;
 			break;
 		}
@@ -336,50 +317,33 @@ static int input_get_disposition(struct input_dev *dev,
 		break;
 	}
 
-	return disposition;
-}
-
-static void input_handle_event(struct input_dev *dev,
-			       unsigned int type, unsigned int code, int value)
-{
-	int disposition;
-
-	disposition = input_get_disposition(dev, type, code, value);
+	if (disposition != INPUT_IGNORE_EVENT && type != EV_SYN)
+		dev->sync = false;
 
 	if ((disposition & INPUT_PASS_TO_DEVICE) && dev->event)
 		dev->event(dev, type, code, value);
 
-	if (!dev->vals)
-		return;
-
-	if (disposition & INPUT_PASS_TO_HANDLERS) {
-		struct input_value *v;
-
-		if (disposition & INPUT_SLOT) {
-			v = &dev->vals[dev->num_vals++];
-			v->type = EV_ABS;
-			v->code = ABS_MT_SLOT;
-			v->value = dev->slot;
-		}
-
-		v = &dev->vals[dev->num_vals++];
-		v->type = type;
-		v->code = code;
-		v->value = value;
-	}
-
-	if (disposition & INPUT_FLUSH) {
-		if (dev->num_vals >= 2)
-			input_pass_values(dev, dev->vals, dev->num_vals);
-		dev->num_vals = 0;
-	} else if (dev->num_vals >= dev->max_vals - 2) {
-		dev->vals[dev->num_vals++] = input_value_sync;
-		input_pass_values(dev, dev->vals, dev->num_vals);
-		dev->num_vals = 0;
-	}
-
+	if (disposition & INPUT_PASS_TO_HANDLERS)
+		input_pass_event(dev, type, code, value);
 }
 
+/**
+ * input_event() - report new input event
+ * @dev: device that generated the event
+ * @type: type of the event
+ * @code: event code
+ * @value: value of the event
+ *
+ * This function should be used by drivers implementing various input
+ * devices to report input events. See also input_inject_event().
+ *
+ * NOTE: input_event() may be safely used right after input device was
+ * allocated with input_allocate_device(), even before it is registered
+ * with input_register_device(), but the event will not reach any of the
+ * input handlers. Such early invocation of input_event() may be used
+ * to 'seed' initial state of a switch or initial position of absolute
+ * axis, etc.
+ */
 void input_event(struct input_dev *dev,
 		 unsigned int type, unsigned int code, int value)
 {
@@ -388,12 +352,24 @@ void input_event(struct input_dev *dev,
 	if (is_event_supported(type, dev->evbit, EV_MAX)) {
 
 		spin_lock_irqsave(&dev->event_lock, flags);
+		add_input_randomness(type, code, value);
 		input_handle_event(dev, type, code, value);
 		spin_unlock_irqrestore(&dev->event_lock, flags);
 	}
 }
 EXPORT_SYMBOL(input_event);
 
+/**
+ * input_inject_event() - send input event from input handler
+ * @handle: input handle to send event through
+ * @type: type of the event
+ * @code: event code
+ * @value: value of the event
+ *
+ * Similar to input_event() but will ignore event if device is
+ * "grabbed" and handle injecting event is not the one that owns
+ * the device.
+ */
 void input_inject_event(struct input_handle *handle,
 			unsigned int type, unsigned int code, int value)
 {
@@ -415,6 +391,13 @@ void input_inject_event(struct input_handle *handle,
 }
 EXPORT_SYMBOL(input_inject_event);
 
+/**
+ * input_alloc_absinfo - allocates array of input_absinfo structs
+ * @dev: the input device emitting absolute events
+ *
+ * If the absinfo struct the caller asked for is already allocated, this
+ * functions will not do anything.
+ */
 void input_alloc_absinfo(struct input_dev *dev)
 {
 	if (!dev->absinfo)
@@ -445,6 +428,14 @@ void input_set_abs_params(struct input_dev *dev, unsigned int axis,
 EXPORT_SYMBOL(input_set_abs_params);
 
 
+/**
+ * input_grab_device - grabs device for exclusive use
+ * @handle: input handle that wants to own the device
+ *
+ * When a device is grabbed by an input handle all events generated by
+ * the device are delivered only to this handle. Also events injected
+ * by other input handles are ignored while device is grabbed.
+ */
 int input_grab_device(struct input_handle *handle)
 {
 	struct input_dev *dev = handle->dev;
@@ -473,7 +464,7 @@ static void __input_release_device(struct input_handle *handle)
 
 	if (dev->grab == handle) {
 		rcu_assign_pointer(dev->grab, NULL);
-		
+		/* Make sure input_pass_event() notices that grab is gone */
 		synchronize_rcu();
 
 		list_for_each_entry(handle, &dev->h_list, d_node)
@@ -482,6 +473,15 @@ static void __input_release_device(struct input_handle *handle)
 	}
 }
 
+/**
+ * input_release_device - release previously grabbed device
+ * @handle: input handle that owns the device
+ *
+ * Releases previously grabbed device so that other input handles can
+ * start receiving input events. Upon release all handlers attached
+ * to the device have their start() method called so they have a change
+ * to synchronize device state with the rest of the system.
+ */
 void input_release_device(struct input_handle *handle)
 {
 	struct input_dev *dev = handle->dev;
@@ -492,6 +492,13 @@ void input_release_device(struct input_handle *handle)
 }
 EXPORT_SYMBOL(input_release_device);
 
+/**
+ * input_open_device - open input device
+ * @handle: handle through which device is being accessed
+ *
+ * This function should be called by input handlers when they
+ * want to start receive events from given input device.
+ */
 int input_open_device(struct input_handle *handle)
 {
 	struct input_dev *dev = handle->dev;
@@ -514,6 +521,10 @@ int input_open_device(struct input_handle *handle)
 	if (retval) {
 		dev->users--;
 		if (!--handle->open) {
+			/*
+			 * Make sure we are not delivering any more events
+			 * through this handle
+			 */
 			synchronize_rcu();
 		}
 	}
@@ -541,6 +552,13 @@ int input_flush_device(struct input_handle *handle, struct file *file)
 }
 EXPORT_SYMBOL(input_flush_device);
 
+/**
+ * input_close_device - close input device
+ * @handle: handle through which device is being accessed
+ *
+ * This function should be called by input handlers when they
+ * want to stop receive events from given input device.
+ */
 void input_close_device(struct input_handle *handle)
 {
 	struct input_dev *dev = handle->dev;
@@ -553,6 +571,11 @@ void input_close_device(struct input_handle *handle)
 		dev->close(dev);
 
 	if (!--handle->open) {
+		/*
+		 * synchronize_rcu() makes sure that input_pass_event()
+		 * completed and that no more input events are delivered
+		 * through this handle
+		 */
 		synchronize_rcu();
 	}
 
@@ -560,6 +583,10 @@ void input_close_device(struct input_handle *handle)
 }
 EXPORT_SYMBOL(input_close_device);
 
+/*
+ * Simulate keyup events for all keys that are marked as pressed.
+ * The function must be called with dev->event_lock held.
+ */
 static void input_dev_release_keys(struct input_dev *dev)
 {
 	int code;
@@ -575,16 +602,30 @@ static void input_dev_release_keys(struct input_dev *dev)
 	}
 }
 
+/*
+ * Prepare device for unregistering
+ */
 static void input_disconnect_device(struct input_dev *dev)
 {
 	struct input_handle *handle;
 
+	/*
+	 * Mark device as going away. Note that we take dev->mutex here
+	 * not to protect access to dev->going_away but rather to ensure
+	 * that there are no threads in the middle of input_open_device()
+	 */
 	mutex_lock(&dev->mutex);
 	dev->going_away = true;
 	mutex_unlock(&dev->mutex);
 
 	spin_lock_irq(&dev->event_lock);
 
+	/*
+	 * Simulate keyup events for all pressed keys so that handlers
+	 * are not left with "stuck" keys. The driver may continue
+	 * generate events even after we done here but they will not
+	 * reach any handlers.
+	 */
 	input_dev_release_keys(dev);
 
 	list_for_each_entry(handle, &dev->h_list, d_node)
@@ -593,6 +634,16 @@ static void input_disconnect_device(struct input_dev *dev)
 	spin_unlock_irq(&dev->event_lock);
 }
 
+/**
+ * input_scancode_to_scalar() - converts scancode in &struct input_keymap_entry
+ * @ke: keymap entry containing scancode to be converted.
+ * @scancode: pointer to the location where converted scancode should
+ *	be stored.
+ *
+ * This function is used to convert scancode stored in &struct keymap_entry
+ * into scalar form understood by legacy keymap handling methods. These
+ * methods expect scancodes to be represented as 'unsigned int'.
+ */
 int input_scancode_to_scalar(const struct input_keymap_entry *ke,
 			     unsigned int *scancode)
 {
@@ -617,6 +668,10 @@ int input_scancode_to_scalar(const struct input_keymap_entry *ke,
 }
 EXPORT_SYMBOL(input_scancode_to_scalar);
 
+/*
+ * Those routines handle the default case where no [gs]etkeycode() is
+ * defined. In this case, an array indexed by the scancode is used.
+ */
 
 static unsigned int input_fetch_keycode(struct input_dev *dev,
 					unsigned int index)
@@ -714,13 +769,21 @@ static int input_default_setkeycode(struct input_dev *dev,
 	for (i = 0; i < dev->keycodemax; i++) {
 		if (input_fetch_keycode(dev, i) == *old_keycode) {
 			__set_bit(*old_keycode, dev->keybit);
-			break; 
+			break; /* Setting the bit twice is useless, so break */
 		}
 	}
 
 	return 0;
 }
 
+/**
+ * input_get_keycode - retrieve keycode currently mapped to a given scancode
+ * @dev: input device which keymap is being queried
+ * @ke: keymap entry
+ *
+ * This function should be called by anyone interested in retrieving current
+ * keymap. Presently evdev handlers use it.
+ */
 int input_get_keycode(struct input_dev *dev, struct input_keymap_entry *ke)
 {
 	unsigned long flags;
@@ -734,6 +797,14 @@ int input_get_keycode(struct input_dev *dev, struct input_keymap_entry *ke)
 }
 EXPORT_SYMBOL(input_get_keycode);
 
+/**
+ * input_set_keycode - attribute a keycode to a given scancode
+ * @dev: input device which keymap is being updated
+ * @ke: new keymap entry
+ *
+ * This function should be called by anyone needing to update current
+ * keymap. Presently keyboard and evdev handlers use it.
+ */
 int input_set_keycode(struct input_dev *dev,
 		      const struct input_keymap_entry *ke)
 {
@@ -750,18 +821,20 @@ int input_set_keycode(struct input_dev *dev,
 	if (retval)
 		goto out;
 
-	
+	/* Make sure KEY_RESERVED did not get enabled. */
 	__clear_bit(KEY_RESERVED, dev->keybit);
 
+	/*
+	 * Simulate keyup event if keycode is not present
+	 * in the keymap anymore
+	 */
 	if (test_bit(EV_KEY, dev->evbit) &&
 	    !is_event_supported(old_keycode, dev->keybit, KEY_MAX) &&
 	    __test_and_clear_bit(old_keycode, dev->key)) {
-		struct input_value vals[] =  {
-			{ EV_KEY, old_keycode, 0 },
-			input_value_sync
-		};
 
-		input_pass_values(dev, vals, ARRAY_SIZE(vals));
+		input_pass_event(dev, EV_KEY, old_keycode, 0);
+		if (dev->sync)
+			input_pass_event(dev, EV_SYN, SYN_REPORT, 1);
 	}
 
  out:
@@ -860,7 +933,7 @@ static int input_bits_to_string(char *buf, int buf_size,
 	return len;
 }
 
-#else 
+#else /* !CONFIG_COMPAT */
 
 static int input_bits_to_string(char *buf, int buf_size,
 				unsigned long bits, bool skip_empty)
@@ -907,7 +980,7 @@ static void *input_devices_seq_start(struct seq_file *seq, loff_t *pos)
 	union input_seq_state *state = (union input_seq_state *)&seq->private;
 	int error;
 
-	
+	/* We need to fit into seq->private pointer */
 	BUILD_BUG_ON(sizeof(union input_seq_state) != sizeof(seq->private));
 
 	error = mutex_lock_interruptible(&input_mutex);
@@ -951,6 +1024,9 @@ static void input_seq_print_bitmap(struct seq_file *seq, const char *name,
 		}
 	}
 
+	/*
+	 * If no output was produced print a single 0.
+	 */
 	if (skip_empty)
 		seq_puts(seq, "0");
 
@@ -1028,7 +1104,7 @@ static void *input_handlers_seq_start(struct seq_file *seq, loff_t *pos)
 	union input_seq_state *state = (union input_seq_state *)&seq->private;
 	int error;
 
-	
+	/* We need to fit into seq->private pointer */
 	BUILD_BUG_ON(sizeof(union input_seq_state) != sizeof(seq->private));
 
 	error = mutex_lock_interruptible(&input_mutex);
@@ -1118,7 +1194,7 @@ static void input_proc_exit(void)
 	remove_proc_entry("bus/input", NULL);
 }
 
-#else 
+#else /* !CONFIG_PROC_FS */
 static inline void input_wakeup_procfs_readers(void) { }
 static inline int input_proc_init(void) { return 0; }
 static inline void input_proc_exit(void) { }
@@ -1273,6 +1349,9 @@ static int input_print_bitmap(char *buf, int buf_size, unsigned long *bitmap,
 		}
 	}
 
+	/*
+	 * If no output was produced print a single 0.
+	 */
 	if (len == 0)
 		len = snprintf(buf, buf_size, "%d", 0);
 
@@ -1337,12 +1416,15 @@ static void input_dev_release(struct device *device)
 	input_ff_destroy(dev);
 	input_mt_destroy_slots(dev);
 	kfree(dev->absinfo);
-	kfree(dev->vals);
 	kfree(dev);
 
 	module_put(THIS_MODULE);
 }
 
+/*
+ * Input uevent interface - loading event handlers based on
+ * device bitfields.
+ */
 static int input_add_uevent_bm_var(struct kobj_uevent_env *env,
 				   const char *name, unsigned long *bitmap, int max)
 {
@@ -1473,13 +1555,26 @@ static void input_dev_toggle(struct input_dev *dev, bool activate)
 	}
 }
 
+/**
+ * input_reset_device() - reset/restore the state of input device
+ * @dev: input device whose state needs to be reset
+ *
+ * This function tries to reset the state of an opened input device and
+ * bring internal state and state if the hardware in sync with each other.
+ * We mark all keys as released, restore LED state, repeat rate, etc.
+ */
 void input_reset_device(struct input_dev *dev)
 {
 	mutex_lock(&dev->mutex);
 
 	if (dev->users) {
 		input_dev_toggle(dev, true);
+/* Remove this because conflict with hTC quickboot	*/
 #if 0
+		/*
+		 * Keys that have been pressed at suspend time are unlikely
+		 * to be still pressed when we resume.
+		 */
 		spin_lock_irq(&dev->event_lock);
 		input_dev_release_keys(dev);
 		spin_unlock_irq(&dev->event_lock);
@@ -1520,7 +1615,7 @@ static const struct dev_pm_ops input_dev_pm_ops = {
 	.poweroff	= input_dev_suspend,
 	.restore	= input_dev_resume,
 };
-#endif 
+#endif /* CONFIG_PM */
 
 static struct device_type input_dev_type = {
 	.groups		= input_dev_attr_groups,
@@ -1542,6 +1637,15 @@ struct class input_class = {
 };
 EXPORT_SYMBOL_GPL(input_class);
 
+/**
+ * input_allocate_device - allocate memory for new input device
+ *
+ * Returns prepared struct input_dev or NULL.
+ *
+ * NOTE: Use input_free_device() to free devices that have not been
+ * registered; input_unregister_device() should be used for already
+ * registered devices.
+ */
 struct input_dev *input_allocate_device(void)
 {
 	struct input_dev *dev;
@@ -1563,6 +1667,20 @@ struct input_dev *input_allocate_device(void)
 }
 EXPORT_SYMBOL(input_allocate_device);
 
+/**
+ * input_free_device - free memory occupied by input_dev structure
+ * @dev: input device to free
+ *
+ * This function should only be used if input_register_device()
+ * was not called yet or if it failed. Once device was registered
+ * use input_unregister_device() and memory will be freed once last
+ * reference to the device is dropped.
+ *
+ * Device should be allocated by input_allocate_device().
+ *
+ * NOTE: If there are references to the input device then memory
+ * will not be freed until last reference is dropped.
+ */
 void input_free_device(struct input_dev *dev)
 {
 	if (dev)
@@ -1570,6 +1688,15 @@ void input_free_device(struct input_dev *dev)
 }
 EXPORT_SYMBOL(input_free_device);
 
+/**
+ * input_set_capability - mark device as capable of a certain event
+ * @dev: device that is capable of emitting or accepting event
+ * @type: type of the event (EV_KEY, EV_REL, etc...)
+ * @code: event code
+ *
+ * In addition to setting up corresponding bit in appropriate capability
+ * bitmap the function also adjusts dev->evbit.
+ */
 void input_set_capability(struct input_dev *dev, unsigned int type, unsigned int code)
 {
 	switch (type) {
@@ -1606,7 +1733,7 @@ void input_set_capability(struct input_dev *dev, unsigned int type, unsigned int
 		break;
 
 	case EV_PWR:
-		
+		/* do nothing */
 		break;
 
 	default:
@@ -1638,7 +1765,7 @@ static unsigned int input_estimate_events_per_packet(struct input_dev *dev)
 		mt_slots = 0;
 	}
 
-	events = mt_slots + 1; 
+	events = mt_slots + 1; /* count SYN_MT_REPORT and SYN_REPORT */
 
 	for (i = 0; i < ABS_CNT; i++) {
 		if (test_bit(i, dev->absbit)) {
@@ -1652,9 +1779,6 @@ static unsigned int input_estimate_events_per_packet(struct input_dev *dev)
 	for (i = 0; i < REL_CNT; i++)
 		if (test_bit(i, dev->relbit))
 			events++;
-
-	/* Make room for KEY and MSC events */
-	events += 7;
 
 	return events;
 }
@@ -1678,32 +1802,42 @@ static void input_cleanse_bitmasks(struct input_dev *dev)
 	INPUT_CLEANSE_BITMASK(dev, SW, sw);
 }
 
+/**
+ * input_register_device - register device with input core
+ * @dev: device to be registered
+ *
+ * This function registers device with input core. The device must be
+ * allocated with input_allocate_device() and all it's capabilities
+ * set up before registering.
+ * If function fails the device must be freed with input_free_device().
+ * Once device has been successfully registered it can be unregistered
+ * with input_unregister_device(); input_free_device() should not be
+ * called in this case.
+ */
 int input_register_device(struct input_dev *dev)
 {
 	static atomic_t input_no = ATOMIC_INIT(0);
 	struct input_handler *handler;
-	unsigned int packet_size;
 	const char *path;
 	int error;
 
-	
+	/* Every input device generates EV_SYN/SYN_REPORT events. */
 	__set_bit(EV_SYN, dev->evbit);
 
-	
+	/* KEY_RESERVED is not supposed to be transmitted to userspace. */
 	__clear_bit(KEY_RESERVED, dev->keybit);
 
-	
+	/* Make sure that bitmasks not mentioned in dev->evbit are clean. */
 	input_cleanse_bitmasks(dev);
 
-	packet_size = input_estimate_events_per_packet(dev);
-	if (dev->hint_events_per_packet < packet_size)
-		dev->hint_events_per_packet = packet_size;
+	if (!dev->hint_events_per_packet)
+		dev->hint_events_per_packet =
+				input_estimate_events_per_packet(dev);
 
-	dev->max_vals = max(dev->hint_events_per_packet, packet_size) + 2;
-	dev->vals = kcalloc(dev->max_vals, sizeof(*dev->vals), GFP_KERNEL);
-	if (!dev->vals)
-		return -ENOMEM;
-
+	/*
+	 * If delay and period are pre-set by the driver, then autorepeating
+	 * is handled by the driver itself and we don't do it in input.c.
+	 */
 	init_timer(&dev->timer);
 	if (!dev->rep[REP_DELAY] && !dev->rep[REP_PERIOD]) {
 		dev->timer.data = (long) dev;
@@ -1750,6 +1884,13 @@ int input_register_device(struct input_dev *dev)
 }
 EXPORT_SYMBOL(input_register_device);
 
+/**
+ * input_unregister_device - unregister previously registered device
+ * @dev: device to be unregistered
+ *
+ * This function unregisters an input device. Once device is unregistered
+ * the caller should not try to access it as it may get freed at any moment.
+ */
 void input_unregister_device(struct input_dev *dev)
 {
 	struct input_handle *handle, *next;
@@ -1773,6 +1914,14 @@ void input_unregister_device(struct input_dev *dev)
 }
 EXPORT_SYMBOL(input_unregister_device);
 
+/**
+ * input_register_handler - register a new input handler
+ * @handler: handler to be registered
+ *
+ * This function registers a new input handler (interface) for input
+ * devices in the system and attaches it to all input devices that
+ * are compatible with the handler.
+ */
 int input_register_handler(struct input_handler *handler)
 {
 	struct input_dev *dev;
@@ -1805,6 +1954,13 @@ int input_register_handler(struct input_handler *handler)
 }
 EXPORT_SYMBOL(input_register_handler);
 
+/**
+ * input_unregister_handler - unregisters an input handler
+ * @handler: handler to be unregistered
+ *
+ * This function disconnects a handler from its input devices and
+ * removes it from lists of known handlers.
+ */
 void input_unregister_handler(struct input_handler *handler)
 {
 	struct input_handle *handle, *next;
@@ -1826,6 +1982,18 @@ void input_unregister_handler(struct input_handler *handler)
 }
 EXPORT_SYMBOL(input_unregister_handler);
 
+/**
+ * input_handler_for_each_handle - handle iterator
+ * @handler: input handler to iterate
+ * @data: data for the callback
+ * @fn: function to be called for each handle
+ *
+ * Iterate over @bus's list of devices, and call @fn for each, passing
+ * it @data and stop when @fn returns a non-zero value. The function is
+ * using RCU to traverse the list and therefore may be usind in atonic
+ * contexts. The @fn callback is invoked from RCU critical section and
+ * thus must not sleep.
+ */
 int input_handler_for_each_handle(struct input_handler *handler, void *data,
 				  int (*fn)(struct input_handle *, void *))
 {
@@ -1846,16 +2014,35 @@ int input_handler_for_each_handle(struct input_handler *handler, void *data,
 }
 EXPORT_SYMBOL(input_handler_for_each_handle);
 
+/**
+ * input_register_handle - register a new input handle
+ * @handle: handle to register
+ *
+ * This function puts a new input handle onto device's
+ * and handler's lists so that events can flow through
+ * it once it is opened using input_open_device().
+ *
+ * This function is supposed to be called from handler's
+ * connect() method.
+ */
 int input_register_handle(struct input_handle *handle)
 {
 	struct input_handler *handler = handle->handler;
 	struct input_dev *dev = handle->dev;
 	int error;
 
+	/*
+	 * We take dev->mutex here to prevent race with
+	 * input_release_device().
+	 */
 	error = mutex_lock_interruptible(&dev->mutex);
 	if (error)
 		return error;
 
+	/*
+	 * Filters go to the head of the list, normal handlers
+	 * to the tail.
+	 */
 	if (handler->filter)
 		list_add_rcu(&handle->d_node, &dev->h_list);
 	else
@@ -1863,6 +2050,12 @@ int input_register_handle(struct input_handle *handle)
 
 	mutex_unlock(&dev->mutex);
 
+	/*
+	 * Since we are supposed to be called from ->connect()
+	 * which is mutually exclusive with ->disconnect()
+	 * we can't be racing with input_unregister_handle()
+	 * and so separate lock is not needed here.
+	 */
 	list_add_tail_rcu(&handle->h_node, &handler->h_list);
 
 	if (handler->start)
@@ -1872,12 +2065,25 @@ int input_register_handle(struct input_handle *handle)
 }
 EXPORT_SYMBOL(input_register_handle);
 
+/**
+ * input_unregister_handle - unregister an input handle
+ * @handle: handle to unregister
+ *
+ * This function removes input handle from device's
+ * and handler's lists.
+ *
+ * This function is supposed to be called from handler's
+ * disconnect() method.
+ */
 void input_unregister_handle(struct input_handle *handle)
 {
 	struct input_dev *dev = handle->dev;
 
 	list_del_rcu(&handle->h_node);
 
+	/*
+	 * Take dev->mutex to prevent race with input_release_device().
+	 */
 	mutex_lock(&dev->mutex);
 	list_del_rcu(&handle->d_node);
 	mutex_unlock(&dev->mutex);
@@ -1896,13 +2102,17 @@ static int input_open_file(struct inode *inode, struct file *file)
 	if (err)
 		return err;
 
-	
+	/* No load-on-demand here? */
 	handler = input_table[iminor(inode) >> 5];
 	if (handler)
 		new_fops = fops_get(handler->fops);
 
 	mutex_unlock(&input_mutex);
 
+	/*
+	 * That's _really_ odd. Usually NULL ->open means "nothing special",
+	 * not "no device". Oh, well...
+	 */
 	if (!new_fops || !new_fops->open) {
 		fops_put(new_fops);
 		err = -ENODEV;

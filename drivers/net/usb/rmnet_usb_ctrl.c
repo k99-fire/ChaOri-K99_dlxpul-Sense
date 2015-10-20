@@ -272,9 +272,11 @@ static void rmnet_usb_ctrl_read_timer_expire(unsigned long data)
 		log_rmnet_usb_ctrl_event(dev->intf, "Rx timeout", 0);
 	#endif	
 	
-
-	expired_rcvurb = dev->rcvurb;
-	schedule_delayed_work_on(0, &kill_rcv_urb_delay_work, 10);
+	if( NULL == expired_rcvurb ) {
+		pr_info("[RMNET][%s] Read urb %p expire\n", __func__, expired_rcvurb);
+		expired_rcvurb = dev->rcvurb;
+		schedule_delayed_work_on(0, &kill_rcv_urb_delay_work, 10);
+	}
 }
 #endif	
 
@@ -854,7 +856,7 @@ static int rmnet_ctl_open(struct inode *inode, struct file *file)
 					__func__, dev->name);
 
 #ifdef HTC_MDM_RESTART_IF_RMNET_OPEN_TIMEOUT
-		if (jiffies_to_msecs(jiffies - dev->connected_jiffies) > RMNET_OPEN_TIMEOUT_MS) {
+		if ((dev->claimed) && jiffies_to_msecs(jiffies - dev->connected_jiffies) > RMNET_OPEN_TIMEOUT_MS) {
 			dev_err(dev->devicep, "%s[%d]:dev->connected_jiffies:%lu jiffies:%lu\n", __func__, __LINE__, dev->connected_jiffies, jiffies);
 			dev_err(dev->devicep, "%s[%d]:htc_ehci_trigger_mdm_restart!!!\n", __func__, __LINE__);
 			htc_ehci_trigger_mdm_restart();
@@ -1706,8 +1708,16 @@ int rmnet_usb_ctrl_init(int no_rmnet_devs, int no_rmnet_insts_per_dev)
 					__func__, PTR_ERR(dev->devicep));
 				cdev_del(&dev->cdev);
 				destroy_workqueue(dev->wq);
+				
+				status = PTR_ERR(dev->devicep);
+				
 				kfree(dev);
-				return PTR_ERR(dev->devicep);
+				
+				
+				
+				
+				return status;
+				
 			}
 
 			

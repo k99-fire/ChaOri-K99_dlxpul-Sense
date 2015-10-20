@@ -24,7 +24,6 @@
 #include "msm_gemini_common.h"
 #include "msm_gemini_hw.h"
 
-/* AXI rate in KHz */
 #define MSM_SYSTEM_BUS_RATE	160000
 struct ion_client *gemini_client;
 
@@ -32,6 +31,8 @@ void msm_gemini_platform_p2v(struct file  *file,
 				struct ion_handle **ionhandle)
 {
 #ifdef CONFIG_MSM_MULTIMEDIA_USE_ION
+    if(*ionhandle == NULL)
+	    return;
 	ion_unmap_iommu(gemini_client, *ionhandle, CAMERA_DOMAIN, GEN_POOL);
 	ion_free(gemini_client, *ionhandle);
 	*ionhandle = NULL;
@@ -67,7 +68,7 @@ uint32_t msm_gemini_platform_v2p(int fd, uint32_t len, struct file **file_p,
 		goto error1;
 	}
 
-	/* validate user input */
+	
 	if (len > size) {
 		GMN_PR_ERR("%s: invalid offset + len\n", __func__);
 		goto error1;
@@ -155,7 +156,7 @@ int msm_gemini_platform_init(struct platform_device *pdev,
 				ARRAY_SIZE(gemini_imem_clk_info), 1);
 		if (!rc)
 			pgmn_dev->hw_version = GEMINI_8960;
-#endif //!CONFIG_ARCH_MSM8X60
+#endif 
 	}
 
 	if (pgmn_dev->hw_version != GEMINI_7X) {
